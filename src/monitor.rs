@@ -2,23 +2,23 @@
 //! Async monitor task: connects to scheduler, receives messages, sends events.
 
 use crate::model::MonitorEvent;
+use compact_str::CompactString;
 use icecc_protocol::connection::SchedulerConnection;
 use icecc_protocol::connection::TcpSchedulerConnection;
 use icecc_protocol::messages::Message;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
 
-/// Parse statmsg "Key:Value\n..." into HashMap.
-fn parse_stats(statmsg: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
+/// Parse statmsg "Key:Value\n..." into key-value pairs.
+fn parse_stats(statmsg: &str) -> Vec<(CompactString, CompactString)> {
+    let mut pairs = Vec::new();
     for line in statmsg.lines() {
         if let Some((k, v)) = line.split_once(':') {
-            map.insert(k.to_string(), v.to_string());
+            pairs.push((CompactString::new(k), CompactString::new(v)));
         }
     }
-    map
+    pairs
 }
 
 /// Run the monitor loop. Reconnects on failure.
@@ -51,8 +51,8 @@ async fn connect_and_monitor(
     let mut conn = TcpSchedulerConnection::connect(info.address).await?;
 
     tx.send(MonitorEvent::Connected {
-        scheduler_name: info.address.to_string(),
-        netname: info.netname.clone(),
+        scheduler_name: CompactString::from(info.address.to_string()),
+        netname: CompactString::from(info.netname.as_str()),
     })?;
 
     // Message receive loop
@@ -120,10 +120,10 @@ mod tests {
     fn test_parse_stats() {
         let s = "Name:myhost\nMaxJobs:4\nSpeed:100\nIP:10.0.0.1\n";
         let m = parse_stats(s);
-        assert_eq!(m["Name"], "myhost");
-        assert_eq!(m["MaxJobs"], "4");
-        assert_eq!(m["Speed"], "100");
-        assert_eq!(m["IP"], "10.0.0.1");
+        assert_eq!(m[0].1, "myhost");
+        assert_eq!(m[1].1, "4");
+        assert_eq!(m[2].1, "100");
+        assert_eq!(m[3].1, "10.0.0.1");
     }
 
     #[test]

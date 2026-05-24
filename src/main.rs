@@ -32,7 +32,7 @@ struct Args {
 
 enum UiEvent {
     Key(crossterm::event::KeyEvent),
-    Resize,
+    Redraw,
     Monitor(model::MonitorEvent),
 }
 
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
                 {
                     break;
                 }
-                Ok(Event::Resize(..)) if tx.send(UiEvent::Resize).is_err() => {
+                Ok(Event::Resize(..)) if tx.send(UiEvent::Redraw).is_err() => {
                     break;
                 }
                 _ => {}
@@ -96,30 +96,72 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = ui::App::new(args.anonymize);
+    terminal.draw(|f| ui::draw(f, &mut app))?;
+    let mut last_redraw = tokio::time::Instant::now();
+    let mut redraw_pending = false;
+    let min_interval = tokio::time::Duration::from_millis(100);
+
+    let process_event = |app: &mut ui::App, event: UiEvent| -> Result<bool> {
+        match event {
+            UiEvent::Key(key) => {
+                if key.code == KeyCode::Char('q') {
+                    return Ok(true);
+                }
+                app.handle_key(key);
+            }
+            UiEvent::Monitor(event) => {
+                app.log_messages.push_back(format_log(&event));
+                if app.log_messages.len() > 1000 {
+                    app.log_messages.pop_front();
+                }
+                app.state.apply_event(event);
+            }
+            UiEvent::Redraw => {}
+        }
+        Ok(false)
+    };
 
     loop {
-        tokio::select! {
-            Some(event) = event_rx.recv() => {
-                match event {
-                    UiEvent::Key(key) => {
-                        if key.code == KeyCode::Char('q') {
-                            break;
-                        }
-                        app.handle_key(key);
+        if redraw_pending {
+            let elapsed = last_redraw.elapsed();
+            let remaining = min_interval.saturating_sub(elapsed);
+            tokio::select! {
+                _ = tokio::time::sleep(remaining) => {
+                    terminal.draw(|f| ui::draw(f, &mut app))?;
+                    last_redraw = tokio::time::Instant::now();
+                    redraw_pending = false;
+                }
+                Some(event) = event_rx.recv() => {
+                    let is_immediate = matches!(event, UiEvent::Key(_) | UiEvent::Redraw);
+                    if process_event(&mut app, event)? {
+                        break;
                     }
-                    UiEvent::Monitor(event) => {
-                        app.log_messages.push(format_log(&event));
-                        if app.log_messages.len() > 1000 {
-                            app.log_messages.remove(0);
-                        }
-                        app.state.apply_event(event);
+                    if is_immediate {
+                        terminal.draw(|f| ui::draw(f, &mut app))?;
+                        last_redraw = tokio::time::Instant::now();
+                        redraw_pending = false;
                     }
-                    UiEvent::Resize => {}
                 }
             }
+        } else {
+            let Some(event) = event_rx.recv().await else {
+                break;
+            };
+            let is_immediate = matches!(event, UiEvent::Key(_) | UiEvent::Redraw);
+            let is_monitor = matches!(event, UiEvent::Monitor(_));
+            if process_event(&mut app, event)? {
+                break;
+            }
+            if is_immediate {
+                terminal.draw(|f| ui::draw(f, &mut app))?;
+                last_redraw = tokio::time::Instant::now();
+            } else if is_monitor && last_redraw.elapsed() >= min_interval {
+                terminal.draw(|f| ui::draw(f, &mut app))?;
+                last_redraw = tokio::time::Instant::now();
+            } else if is_monitor {
+                redraw_pending = true;
+            }
         }
-
-        terminal.draw(|f| ui::draw(f, &mut app))?;
     }
 
     disable_raw_mode()?;
@@ -141,7 +183,10 @@ fn format_log(event: &model::MonitorEvent) -> String {
         }
         MonitorEvent::Disconnected => "Disconnected".into(),
         MonitorEvent::HostStats { host_id, attrs } => {
-            let name = attrs.get("Name").map_or("?", |s| s.as_str());
+            let name = attrs
+                .iter()
+                .find(|(k, _)| k == "Name")
+                .map_or("?", |(_, v)| v.as_str());
             format!("HostStats: host={} name={}", host_id, name)
         }
         MonitorEvent::JobPending {

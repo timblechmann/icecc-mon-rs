@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-only
 //! Data model: Host, Job, SchedulerState, MonitorEvent.
 
-use std::collections::HashMap;
+use compact_str::CompactString;
 use std::time::Instant;
 
 /// Event sent from the monitor task to the TUI.
 #[derive(Debug, Clone)]
 pub enum MonitorEvent {
     Connected {
-        scheduler_name: String,
-        netname: String,
+        scheduler_name: CompactString,
+        netname: CompactString,
     },
     Disconnected,
     HostStats {
         host_id: u32,
-        attrs: HashMap<String, String>,
+        attrs: Vec<(CompactString, CompactString)>,
     },
     JobPending {
         job_id: u32,
@@ -38,13 +38,13 @@ pub enum MonitorEvent {
 #[derive(Debug, Clone)]
 pub struct Host {
     pub id: u32,
-    pub name: String,
+    pub name: CompactString,
     pub max_jobs: u32,
     pub speed: u32,
-    pub platform: String,
+    pub platform: CompactString,
     pub no_remote: bool,
-    pub ip: String,
-    pub attrs: HashMap<String, String>,
+    pub ip: CompactString,
+    pub attrs: Vec<(CompactString, CompactString)>,
     pub total_in: u32,
     pub total_out: u32,
     pub total_local: u32,
@@ -55,13 +55,13 @@ impl Host {
     pub fn new(id: u32, color_idx: u8) -> Self {
         Self {
             id,
-            name: String::new(),
+            name: CompactString::new(""),
             max_jobs: 0,
             speed: 0,
-            platform: String::new(),
+            platform: CompactString::new(""),
             no_remote: false,
-            ip: String::new(),
-            attrs: HashMap::new(),
+            ip: CompactString::new(""),
+            attrs: Vec::new(),
             total_in: 0,
             total_out: 0,
             total_local: 0,
@@ -69,24 +69,21 @@ impl Host {
         }
     }
 
-    pub fn update_attrs(&mut self, attrs: HashMap<String, String>) {
-        if let Some(name) = attrs.get("Name") {
-            self.name = name.clone();
-        }
-        if let Some(v) = attrs.get("MaxJobs") {
-            self.max_jobs = v.parse().unwrap_or(0);
-        }
-        if let Some(v) = attrs.get("Speed") {
-            self.speed = v.parse().unwrap_or(0);
-        }
-        if let Some(v) = attrs.get("Platform") {
-            self.platform = v.clone();
-        }
-        if let Some(v) = attrs.get("NoRemote") {
-            self.no_remote = v == "true" || v == "1";
-        }
-        if let Some(v) = attrs.get("IP") {
-            self.ip = v.clone();
+    pub fn update_attrs(&mut self, attrs: Vec<(CompactString, CompactString)>) {
+        for (k, v) in &attrs {
+            if k == "Name" {
+                self.name = v.clone();
+            } else if k == "MaxJobs" {
+                self.max_jobs = v.parse().unwrap_or(0);
+            } else if k == "Speed" {
+                self.speed = v.parse().unwrap_or(0);
+            } else if k == "Platform" {
+                self.platform = v.clone();
+            } else if k == "NoRemote" {
+                self.no_remote = v == "true" || v == "1";
+            } else if k == "IP" {
+                self.ip = v.clone();
+            }
         }
         self.attrs = attrs;
     }
@@ -111,10 +108,10 @@ pub struct Job {
 /// Aggregate state of the scheduler.
 #[derive(Debug)]
 pub struct SchedulerState {
-    pub hosts: HashMap<u32, Host>,
-    pub jobs: HashMap<u32, Job>,
-    pub scheduler_name: String,
-    pub netname: String,
+    pub hosts: std::collections::HashMap<u32, Host>,
+    pub jobs: std::collections::HashMap<u32, Job>,
+    pub scheduler_name: CompactString,
+    pub netname: CompactString,
     pub connected: bool,
     pub total_remote: u64,
     pub total_local: u64,
@@ -130,10 +127,10 @@ impl Default for SchedulerState {
 impl SchedulerState {
     pub fn new() -> Self {
         Self {
-            hosts: HashMap::new(),
-            jobs: HashMap::new(),
-            scheduler_name: String::new(),
-            netname: String::new(),
+            hosts: std::collections::HashMap::new(),
+            jobs: std::collections::HashMap::new(),
+            scheduler_name: CompactString::new(""),
+            netname: CompactString::new(""),
             connected: false,
             total_remote: 0,
             total_local: 0,
@@ -158,7 +155,7 @@ impl SchedulerState {
             }
             MonitorEvent::HostStats { host_id, attrs } => {
                 // No Name → host is dead, remove
-                if !attrs.contains_key("Name") {
+                if !attrs.iter().any(|(k, _)| k == "Name") {
                     self.hosts.remove(&host_id);
                     return;
                 }
@@ -226,23 +223,19 @@ impl SchedulerState {
     }
 
     /// Active jobs on a given host (executing there).
-    pub fn active_jobs_on_host(&self, host_id: u32) -> Vec<&Job> {
-        self.jobs
-            .values()
-            .filter(|j| {
-                j.host_id == host_id
-                    && matches!(j.state, JobState::RemoteActive | JobState::LocalActive)
-            })
-            .collect()
+    pub fn active_jobs_on_host(&self, host_id: u32) -> impl Iterator<Item = &Job> {
+        self.jobs.values().filter(move |j| {
+            j.host_id == host_id
+                && matches!(j.state, JobState::RemoteActive | JobState::LocalActive)
+        })
     }
 
     /// Pending jobs from a given client.
     #[allow(dead_code)]
-    pub fn pending_jobs_from_client(&self, client_id: u32) -> Vec<&Job> {
+    pub fn pending_jobs_from_client(&self, client_id: u32) -> impl Iterator<Item = &Job> {
         self.jobs
             .values()
-            .filter(|j| j.client_id == client_id && j.state == JobState::Pending)
-            .collect()
+            .filter(move |j| j.client_id == client_id && j.state == JobState::Pending)
     }
 
     /// Total active (non-pending) job count.
@@ -281,8 +274,8 @@ impl SchedulerState {
                 SortColumn::In => ha.total_in.cmp(&hb.total_in),
                 SortColumn::Current => self
                     .active_jobs_on_host(*a)
-                    .len()
-                    .cmp(&self.active_jobs_on_host(*b).len()),
+                    .count()
+                    .cmp(&self.active_jobs_on_host(*b).count()),
                 SortColumn::MaxJobs => ha.max_jobs.cmp(&hb.max_jobs),
                 SortColumn::Out => ha.total_out.cmp(&hb.total_out),
                 SortColumn::Local => ha.total_local.cmp(&hb.total_local),
@@ -348,13 +341,17 @@ impl SortColumn {
 mod tests {
     use super::*;
 
+    fn make_attrs(pairs: &[(&str, &str)]) -> Vec<(CompactString, CompactString)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (CompactString::new(k), CompactString::new(v)))
+            .collect()
+    }
+
     #[test]
     fn test_apply_host_stats() {
         let mut state = SchedulerState::new();
-        let mut attrs = HashMap::new();
-        attrs.insert("Name".into(), "host1".into());
-        attrs.insert("MaxJobs".into(), "4".into());
-        attrs.insert("Speed".into(), "100".into());
+        let attrs = make_attrs(&[("Name", "host1"), ("MaxJobs", "4"), ("Speed", "100")]);
 
         state.apply_event(MonitorEvent::HostStats { host_id: 1, attrs });
 
@@ -366,15 +363,14 @@ mod tests {
     #[test]
     fn test_host_removed_when_no_name() {
         let mut state = SchedulerState::new();
-        let mut attrs = HashMap::new();
-        attrs.insert("Name".into(), "host1".into());
+        let attrs = make_attrs(&[("Name", "host1")]);
         state.apply_event(MonitorEvent::HostStats { host_id: 1, attrs });
         assert_eq!(state.hosts.len(), 1);
 
         // No Name → remove
         state.apply_event(MonitorEvent::HostStats {
             host_id: 1,
-            attrs: HashMap::new(),
+            attrs: Vec::new(),
         });
         assert_eq!(state.hosts.len(), 0);
     }
@@ -383,8 +379,7 @@ mod tests {
     fn test_job_lifecycle() {
         let mut state = SchedulerState::new();
         // Add host
-        let mut attrs = HashMap::new();
-        attrs.insert("Name".into(), "h1".into());
+        let attrs = make_attrs(&[("Name", "h1")]);
         state.apply_event(MonitorEvent::HostStats { host_id: 1, attrs });
 
         // Pending
@@ -411,8 +406,7 @@ mod tests {
     #[test]
     fn test_local_job() {
         let mut state = SchedulerState::new();
-        let mut attrs = HashMap::new();
-        attrs.insert("Name".into(), "h1".into());
+        let attrs = make_attrs(&[("Name", "h1")]);
         state.apply_event(MonitorEvent::HostStats { host_id: 1, attrs });
 
         state.apply_event(MonitorEvent::LocalJobBegin {
@@ -428,8 +422,7 @@ mod tests {
     #[test]
     fn test_disconnect_clears_state() {
         let mut state = SchedulerState::new();
-        let mut attrs = HashMap::new();
-        attrs.insert("Name".into(), "h1".into());
+        let attrs = make_attrs(&[("Name", "h1")]);
         state.apply_event(MonitorEvent::HostStats { host_id: 1, attrs });
         state.apply_event(MonitorEvent::Disconnected);
         assert!(state.hosts.is_empty());

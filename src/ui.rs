@@ -5,6 +5,7 @@ use crate::model::{JobState, SchedulerState, SortColumn};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
+use std::collections::VecDeque;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -57,7 +58,7 @@ pub struct App {
     pub anonymize: bool,
     pub view_mode: ViewMode,
     pub search_query: String,
-    pub log_messages: Vec<String>,
+    pub log_messages: VecDeque<String>,
     pub table_state: TableState,
 }
 
@@ -73,7 +74,7 @@ impl App {
             anonymize,
             view_mode: ViewMode::Table,
             search_query: String::new(),
-            log_messages: Vec::new(),
+            log_messages: VecDeque::new(),
             table_state: TableState::default(),
         }
     }
@@ -236,7 +237,15 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
                     state
                         .hosts
                         .values()
-                        .filter(|h| { !app.state.active_jobs_on_host(h.id).is_empty() })
+                        .filter(|h| {
+                            state.jobs.values().any(|j| {
+                                j.host_id == h.id
+                                    && matches!(
+                                        j.state,
+                                        JobState::RemoteActive | JobState::LocalActive
+                                    )
+                            })
+                        })
                         .count()
                 ),
                 Style::default().fg(Color::Yellow),
@@ -288,7 +297,7 @@ fn host_to_table_row(host_ids: &[u32], host_index: usize, app: &App) -> usize {
         if (app.expand_all || app.expanded.contains(&id))
             && let Some(host) = app.state.hosts.get(&id)
         {
-            row += app.state.active_jobs_on_host(id).len() + host.attrs.len();
+            row += app.state.active_jobs_on_host(id).count() + host.attrs.len();
         }
     }
     row
@@ -329,8 +338,18 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Min(30),   // JOBS bar
     ];
 
-    // Column rects relative to area (for bar width & overlay span)
-    let col_rects = Layout::horizontal(widths).split(Rect::new(0, 0, area.width, 1));
+    // Table subtracts highlight symbol for selection, adds 1-char column spacing.
+    let sel_w = if app.table_state.selected().is_some() {
+        2
+    } else {
+        0
+    };
+    let col_rects = Layout::horizontal(widths).spacing(1).split(Rect::new(
+        0,
+        0,
+        area.width.saturating_sub(sel_w),
+        1,
+    ));
     let jobs_bar_w = (col_rects[8].width as usize).saturating_sub(2);
 
     // Spanning rect for detail overlays: union of columns 1-8 (NAME through JOBS)
@@ -350,8 +369,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
             Some(h) => h,
             None => continue,
         };
-        let active = app.state.active_jobs_on_host(host_id);
-        let cur = active.len();
+        let cur = app.state.active_jobs_on_host(host_id).count();
         let color = host_color(host.color_idx);
         let name = app.anonymize_str(&host.name);
 
@@ -388,7 +406,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
         ]));
 
         if app.expand_all || app.expanded.contains(&host_id) {
-            for job in &active {
+            for job in app.state.active_jobs_on_host(host_id) {
                 let elapsed = job.start_time.elapsed().as_secs();
                 let fname = app.anonymize_str(&job.filename);
                 let state_tag = match job.state {
