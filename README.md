@@ -16,7 +16,9 @@ A TUI monitor for the `icecc` distributed compilation system.
 
 - [Rust and Cargo](https://rustup.rs/)
 
-### Installation
+## Installation
+
+### From Source
 
 Clone the repository and build it with Cargo:
 
@@ -25,6 +27,23 @@ cargo build --release
 ```
 
 The binary will be located in `target/release/icecc-mon`.
+
+### Homebrew
+
+Install via Homebrew using the following tap:
+
+```bash
+brew tap timblechmann/icecc-mon-rs-tap
+brew install icecc-mon
+```
+
+### Debian
+
+Download the `.deb` package from the [releases page](https://github.com/timblechmann/icecc-mon-rs/releases) and install it using `apt`:
+
+```bash
+sudo apt install ./icecc-mon_*.deb
+```
 
 ## License
 

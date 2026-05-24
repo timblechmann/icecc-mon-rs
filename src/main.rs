@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 #[derive(Parser, Debug)]
 #[command(
     name = "icecc-mon",
+    version,
     about = "TUI monitor for icecc distributed compilation"
 )]
 struct Args {
