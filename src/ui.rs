@@ -375,7 +375,14 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
             name_style = name_style.add_modifier(Modifier::UNDERLINED);
         }
 
-        let bar_width = 20usize;
+        let highlight_width = 2u16; // "▶ "
+        let spacing_total: u16 = 8; // 9 cols, 8 gaps
+        let fixed_cols: u16 = 5 + 5 + 5 + 5 + 5 + 6 + 6; // 37
+        let name_max: u16 = 30;
+        let jobs_width = (area.width)
+            .saturating_sub(highlight_width + spacing_total + fixed_cols + name_max)
+            .max(22) as usize;
+        let bar_width = jobs_width.saturating_sub(2);
         let filled = if host.max_jobs > 0 {
             (cur * bar_width) / host.max_jobs as usize
         } else {
@@ -453,15 +460,15 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let widths = [
-        Constraint::Length(5),  // ID
-        Constraint::Min(15),    // NAME
-        Constraint::Length(5),  // IN
-        Constraint::Length(5),  // CUR
-        Constraint::Length(5),  // MAX
-        Constraint::Length(5),  // OUT
-        Constraint::Length(6),  // LOCAL
-        Constraint::Length(6),  // SPEED
-        Constraint::Length(22), // JOBS bar
+        Constraint::Length(5), // ID
+        Constraint::Max(30),   // NAME
+        Constraint::Length(5), // IN
+        Constraint::Length(5), // CUR
+        Constraint::Length(5), // MAX
+        Constraint::Length(5), // OUT
+        Constraint::Length(6), // LOCAL
+        Constraint::Length(6), // SPEED
+        Constraint::Min(30),   // JOBS bar
     ];
 
     let table = Table::new(rows, widths)
