@@ -4,6 +4,9 @@ on:
 
 name: Release
 
+permissions:
+  contents: write
+
 jobs:
   # Cross-compiled raw binaries (macOS x86_64 + Windows)
   release-cross:
@@ -20,6 +23,7 @@ jobs:
       - uses: rust-build/rust-build.action@v1.4.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MACOSX_DEPLOYMENT_TARGET: 10.10
         with:
           RUSTTARGET: ${{ matrix.target }}
 
