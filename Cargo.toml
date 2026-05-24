@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "icecc-mon"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "TUI monitor for icecc distributed compilation"
 authors = ["Tim Blechmann <tim@klingt.org>"]
