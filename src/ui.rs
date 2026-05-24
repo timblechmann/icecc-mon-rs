@@ -5,7 +5,6 @@ use crate::model::{JobState, SchedulerState, SortColumn};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
-use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -281,26 +280,15 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(paragraph, area);
 }
 
-/// Compute the table row index for the host at `host_index` in `host_ids`,
-/// accounting for expanded detail rows that precede it.
-fn host_to_table_row(
-    host_ids: &[u32],
-    host_index: usize,
-    expanded: &HashSet<u32>,
-    expand_all: bool,
-    state: &SchedulerState,
-) -> usize {
-    #[allow(clippy::collapsible_if)]
+/// Row index in the full table (host + details) for a given host index.
+fn host_to_table_row(host_ids: &[u32], host_index: usize, app: &App) -> usize {
     let mut row = 0;
-    for (i, &id) in host_ids.iter().enumerate() {
-        if i >= host_index {
-            break;
-        }
-        row += 1; // host row
-        if (expand_all || expanded.contains(&id))
-            && let Some(host) = state.hosts.get(&id)
+    for &id in host_ids.iter().take(host_index) {
+        row += 1;
+        if (app.expand_all || app.expanded.contains(&id))
+            && let Some(host) = app.state.hosts.get(&id)
         {
-            row += state.active_jobs_on_host(id).len() + host.attrs.len();
+            row += app.state.active_jobs_on_host(id).len() + host.attrs.len();
         }
     }
     row
@@ -328,19 +316,104 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
     if !host_ids.is_empty() && app.selected >= host_ids.len() {
         app.selected = host_ids.len() - 1;
     }
-    let row_idx = if host_ids.is_empty() {
-        None
-    } else {
-        Some(host_to_table_row(
-            &host_ids,
-            app.selected,
-            &app.expanded,
-            app.expand_all,
-            &app.state,
-        ))
-    };
-    app.table_state.select(row_idx);
 
+    let widths = [
+        Constraint::Length(5), // ID
+        Constraint::Max(30),   // NAME
+        Constraint::Length(5), // IN
+        Constraint::Length(5), // CUR
+        Constraint::Length(5), // MAX
+        Constraint::Length(5), // OUT
+        Constraint::Length(6), // LOCAL
+        Constraint::Length(6), // SPEED
+        Constraint::Min(30),   // JOBS bar
+    ];
+
+    // Column rects relative to area (for bar width & overlay span)
+    let col_rects = Layout::horizontal(widths).split(Rect::new(0, 0, area.width, 1));
+    let jobs_bar_w = (col_rects[8].width as usize).saturating_sub(2);
+
+    // Spanning rect for detail overlays: union of columns 1-8 (NAME through JOBS)
+    let span_rect = (1..9).fold(col_rects[1], |acc, c| acc.union(col_rects[c]));
+
+    // Build table rows + overlay list
+    struct Overlay {
+        row_idx: usize,
+        text: String,
+    }
+
+    let mut table_rows: Vec<Row> = Vec::new();
+    let mut overlays: Vec<Overlay> = Vec::new();
+
+    for &host_id in &host_ids {
+        let host = match app.state.hosts.get(&host_id) {
+            Some(h) => h,
+            None => continue,
+        };
+        let active = app.state.active_jobs_on_host(host_id);
+        let cur = active.len();
+        let color = host_color(host.color_idx);
+        let name = app.anonymize_str(&host.name);
+
+        let mut name_style = Style::default().fg(color);
+        if host.no_remote {
+            name_style = name_style.add_modifier(Modifier::UNDERLINED);
+        }
+
+        let filled = if host.max_jobs > 0 {
+            (cur * jobs_bar_w) / host.max_jobs as usize
+        } else {
+            0
+        };
+        let bar = format!(
+            "[{}{}]",
+            "━".repeat(filled.min(jobs_bar_w)),
+            " ".repeat(jobs_bar_w.saturating_sub(filled))
+        );
+
+        table_rows.push(Row::new(vec![
+            Cell::from(host_id.to_string()),
+            Cell::from(name).style(name_style),
+            Cell::from(host.total_in.to_string()),
+            Cell::from(cur.to_string()).style(if cur > 0 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            }),
+            Cell::from(host.max_jobs.to_string()),
+            Cell::from(host.total_out.to_string()),
+            Cell::from(host.total_local.to_string()),
+            Cell::from(host.speed.to_string()),
+            Cell::from(bar).style(Style::default().fg(color)),
+        ]));
+
+        if app.expand_all || app.expanded.contains(&host_id) {
+            for job in &active {
+                let elapsed = job.start_time.elapsed().as_secs();
+                let fname = app.anonymize_str(&job.filename);
+                let state_tag = match job.state {
+                    JobState::RemoteActive => "remote",
+                    JobState::LocalActive => "local",
+                    JobState::Pending => "pending",
+                };
+                let text = format!("  └─ [{}] {}s {}", state_tag, elapsed, fname);
+                let ri = table_rows.len();
+                table_rows.push(Row::new(vec![Cell::from(""); 9]));
+                overlays.push(Overlay { row_idx: ri, text });
+            }
+            for (k, v) in &host.attrs {
+                let attr = format!("     {} = {}", k, v);
+                let ri = table_rows.len();
+                table_rows.push(Row::new(vec![Cell::from(""); 9]));
+                overlays.push(Overlay {
+                    row_idx: ri,
+                    text: attr,
+                });
+            }
+        }
+    }
+
+    // Header
     let headers: Vec<Cell> = SortColumn::ALL
         .iter()
         .map(|col| {
@@ -357,126 +430,33 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
         ))
         .collect();
 
-    let header = Row::new(headers).height(1);
-
-    let mut rows: Vec<Row> = Vec::new();
-    for &host_id in &host_ids {
-        let host = match app.state.hosts.get(&host_id) {
-            Some(h) => h,
-            None => continue,
-        };
-        let active = app.state.active_jobs_on_host(host_id);
-        let cur = active.len();
-        let color = host_color(host.color_idx);
-        let name = app.anonymize_str(&host.name);
-
-        let mut name_style = Style::default().fg(color);
-        if host.no_remote {
-            name_style = name_style.add_modifier(Modifier::UNDERLINED);
-        }
-
-        let highlight_width = 2u16; // "▶ "
-        let spacing_total: u16 = 8; // 9 cols, 8 gaps
-        let fixed_cols: u16 = 5 + 5 + 5 + 5 + 5 + 6 + 6; // 37
-        let name_max: u16 = 30;
-        let jobs_width = (area.width)
-            .saturating_sub(highlight_width + spacing_total + fixed_cols + name_max)
-            .max(22) as usize;
-        let bar_width = jobs_width.saturating_sub(2);
-        let filled = if host.max_jobs > 0 {
-            (cur * bar_width) / host.max_jobs as usize
-        } else {
-            0
-        };
-        let bar: String = format!(
-            "[{}{}]",
-            "━".repeat(filled.min(bar_width)),
-            " ".repeat(bar_width.saturating_sub(filled))
-        );
-
-        let cells = vec![
-            Cell::from(host_id.to_string()),
-            Cell::from(name).style(name_style),
-            Cell::from(host.total_in.to_string()),
-            Cell::from(cur.to_string()).style(if cur > 0 {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
-            }),
-            Cell::from(host.max_jobs.to_string()),
-            Cell::from(host.total_out.to_string()),
-            Cell::from(host.total_local.to_string()),
-            Cell::from(host.speed.to_string()),
-            Cell::from(bar).style(Style::default().fg(color)),
-        ];
-
-        rows.push(Row::new(cells));
-
-        let is_expanded = app.expand_all || app.expanded.contains(&host_id);
-        if is_expanded {
-            for job in &active {
-                let elapsed = job.start_time.elapsed().as_secs();
-                let fname = app.anonymize_str(&job.filename);
-                let source_color = app
-                    .state
-                    .hosts
-                    .get(&job.client_id)
-                    .map(|h| host_color(h.color_idx))
-                    .unwrap_or(DIM);
-                rows.push(
-                    Row::new(vec![
-                        Cell::from(""),
-                        Cell::from(Line::from(vec![
-                            Span::raw("  └─ "),
-                            Span::styled(
-                                format!(
-                                    "[{}] ",
-                                    match job.state {
-                                        JobState::RemoteActive => "remote",
-                                        JobState::LocalActive => "local",
-                                        JobState::Pending => "pending",
-                                    }
-                                ),
-                                Style::default().fg(source_color),
-                            ),
-                            Span::styled(format!("{}s ", elapsed), Style::default().fg(DETAIL)),
-                            Span::styled(fname, Style::default().fg(DETAIL)),
-                        ])),
-                    ])
-                    .height(1),
-                );
-            }
-            for (k, v) in &host.attrs {
-                let attr_line = format!("     {} = {}", k, v);
-                rows.push(
-                    Row::new(vec![
-                        Cell::from(""),
-                        Cell::from(attr_line).style(Style::default().fg(DETAIL)),
-                    ])
-                    .height(1),
-                );
-            }
-        }
+    // Select the correct row (host row, not detail)
+    if !host_ids.is_empty() {
+        let sel_row = host_to_table_row(&host_ids, app.selected, app);
+        app.table_state.select(Some(sel_row));
     }
 
-    let widths = [
-        Constraint::Length(5), // ID
-        Constraint::Max(30),   // NAME
-        Constraint::Length(5), // IN
-        Constraint::Length(5), // CUR
-        Constraint::Length(5), // MAX
-        Constraint::Length(5), // OUT
-        Constraint::Length(6), // LOCAL
-        Constraint::Length(6), // SPEED
-        Constraint::Min(30),   // JOBS bar
-    ];
-
-    let table = Table::new(rows, widths)
-        .header(header)
+    // Render Table — host rows rendered normally, detail rows show empty cells
+    let table = Table::new(table_rows, widths)
+        .header(Row::new(headers).height(1))
         .row_highlight_style(Style::default().bg(BAR_BG))
         .highlight_symbol("▶ ");
-
     f.render_stateful_widget(table, area, &mut app.table_state);
+
+    // Overlay full-width detail content on top of visible detail rows
+    let offset = app.table_state.offset();
+    let visible_body = (area.height as usize).saturating_sub(1);
+    for ov in &overlays {
+        if ov.row_idx >= offset && ov.row_idx < offset + visible_body {
+            let local_idx = ov.row_idx - offset;
+            let y = area.y + 1 + local_idx as u16;
+            let overlay_rect = Rect::new(area.x + span_rect.x, y, span_rect.width, 1);
+            f.render_widget(
+                Paragraph::new(ov.text.as_str()).style(Style::default().fg(DETAIL)),
+                overlay_rect,
+            );
+        }
+    }
 }
 
 fn draw_log(f: &mut Frame, app: &App, area: Rect) {
