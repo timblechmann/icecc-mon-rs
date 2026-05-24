@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  # Cross-compiled raw binaries (macOS x86_64 + Windows)
+  # Cross-compiled raw binaries (Windows)
   release-cross:
     name: ${{ matrix.target }}
     runs-on: ubuntu-latest
@@ -24,31 +24,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           RUSTTARGET: ${{ matrix.target }}
-
-  # Native macOS
-  release-macos:
-    name: ${{ matrix.target }}
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }}
-      - name: Upload to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
-            target/${{ matrix.target }}/release/icecc-mon \
-            --clobber
-
 
   # Native .deb package for Linux
   release-deb:
