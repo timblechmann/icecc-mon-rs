@@ -375,7 +375,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
 
         let mut name_style = Style::default().fg(color);
         if host.no_remote {
-            name_style = name_style.add_modifier(Modifier::UNDERLINED);
+            name_style = name_style.add_modifier(Modifier::DIM);
         }
 
         let filled = if host.max_jobs > 0 {
@@ -391,7 +391,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
 
         table_rows.push(Row::new(vec![
             Cell::from(host_id.to_string()),
-            Cell::from(name).style(name_style),
+            Cell::from(Line::from(Span::styled(name, name_style))),
             Cell::from(host.total_in.to_string()),
             Cell::from(cur.to_string()).style(if cur > 0 {
                 Style::default().fg(Color::Yellow)
