@@ -1,0 +1,28 @@
+[workspace]
+members = ["crates/icecc-protocol", "."]
+resolver = "2"
+
+[package]
+name = "icecc-mon"
+version = "0.1.0"
+edition = "2024"
+description = "TUI monitor for icecc distributed compilation"
+authors = ["Tim Blechmann <tim@klingt.org>"]
+license = "GPL-2.0-only"
+
+[package.metadata.deb]
+maintainer = "Tim Blechmann <tim@klingt.org>"
+depends = "$auto"
+section = "utils"
+priority = "optional"
+extended-description = "TUI monitor for the icecc distributed compilation system"
+
+[dependencies]
+icecc-protocol = { path = "crates/icecc-protocol" }
+ratatui = "0.29"
+crossterm = "0.28"
+tokio = { version = "1", features = ["rt", "net", "sync", "time", "macros"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"

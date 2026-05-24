@@ -1,0 +1,17 @@
+[package]
+name = "icecc-protocol"
+version = "0.1.0"
+edition = "2024"
+description = "Pure Rust implementation of the icecc/icecream monitor protocol"
+license = "GPL-2.0-only"
+
+[dependencies]
+tokio = { version = "1", features = ["net", "io-util", "time", "sync"] }
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+async-trait = "0.1"
+
+[dev-dependencies]
+mockall = "0.13"
+tokio = { version = "1", features = ["rt", "macros", "test-util"] }
