@@ -76,7 +76,7 @@ impl Host {
             } else if k == "MaxJobs" {
                 self.max_jobs = v.parse().unwrap_or(0);
             } else if k == "Speed" {
-                self.speed = v.parse().unwrap_or(0);
+                self.speed = v.parse::<f64>().unwrap_or(0.0) as u32;
             } else if k == "Platform" {
                 self.platform = v.clone();
             } else if k == "NoRemote" {
