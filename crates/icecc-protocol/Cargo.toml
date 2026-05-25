@@ -8,10 +8,9 @@ license = "GPL-2.0-only"
 [dependencies]
 tokio = { version = "1", features = ["net", "io-util", "time", "sync"] }
 anyhow = "1"
-thiserror = "2"
 log = "0.4"
 async-trait = "0.1"
 
 [dev-dependencies]
-mockall = "0.13"
+mockall = "0.14"
 tokio = { version = "1", features = ["rt", "macros", "test-util"] }
